@@ -21,7 +21,17 @@ class RecorderConfig:
     expected_replays: int | None = None
     accepted_opening_trim: bool = False
     reclaim_account: bool = False
+    # Every Switch this PC has paired with (most recent first), and every
+    # folder holding a collection, so swapping consoles needs no re-pairing
+    # and each Switch keeps its own folder.
+    switch_addresses: tuple = ()
+    collections: tuple = ()
     schema_version: int = 1
+
+    def __post_init__(self):
+        # JSON gives lists; keep the frozen dataclass hashable and immutable.
+        object.__setattr__(self, 'switch_addresses', tuple(self.switch_addresses))
+        object.__setattr__(self, 'collections', tuple(self.collections))
 
     def validate(self):
         if self.schema_version != 1: raise ValueError('This settings version is not supported.')
@@ -32,8 +42,11 @@ class RecorderConfig:
             raise ValueError('OBS port must be a number from 1 to 65535.')
         if self.expected_replays is not None and (type(self.expected_replays) is not int or self.expected_replays < 1):
             raise ValueError('Replay count must be discovered or a positive whole number.')
-        if self.switch_address and not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', self.switch_address):
-            raise ValueError('The saved Switch connection address is invalid. Pair again.')
+        for address in (self.switch_address, *self.switch_addresses):
+            if address and not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', address):
+                raise ValueError('A saved Switch connection address is invalid. Pair again.')
+        if any(not isinstance(folder, str) or not Path(folder).is_absolute() for folder in self.collections):
+            raise ValueError('A saved collection folder is invalid.')
         if any(type(x) is not bool for x in [self.accepted_opening_trim, self.reclaim_account]):
             raise ValueError('Invalid recording preferences.')
         return self

@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 from recorder_app import engine as engine_module
 from recorder_app import screens
-from recorder_app.engine import Engine, NeedsAttention, StopRequested
+from recorder_app.engine import DifferentSwitch, Engine, Journal, NeedsAttention, OtherCollection, StopRequested
 
 
 def synth(name=None, noise=False, seed=0):
@@ -282,6 +282,51 @@ class EngineTests(unittest.TestCase):
         frame = switch.paste_duration(switch.details_frame(), '2:47')
         self.assertEqual(screens.read_duration(frame), 167)
         self.assertIsNone(screens.read_duration(self.frames['gameplay']))
+
+    def test_different_switch_is_never_merged_into_another_collection(self):
+        first = FakeSwitch(5, self.frames)
+        with self.assertRaises(StopRequested):
+            self.engine(first).run(limit=2)
+        second = FakeSwitch(4, self.frames)
+        second.labels = [100, 101, 102, 103]           # another console's replays
+        engine = Engine(Adapter(second), self.folder)
+        with self.assertRaises(DifferentSwitch) as caught:
+            engine.prepare_session()
+        self.assertEqual(Journal.load(self.folder).summary(), {'done': 2, 'pending': 3})
+        # The counted list starts the new folder without stepping through it again.
+        presses = len(second.pressed)
+        other_folder = self.folder / 'Switch 2'
+        new = Engine(Adapter(second), other_folder)
+        self.assertEqual(new.take_inventory(entries=caught.exception.entries), 4)
+        self.assertEqual(len(second.pressed), presses)
+        new.run()
+        self.assertEqual(new.journal.summary(), {'done': 4})
+
+    def test_known_switch_is_sent_to_its_own_collection(self):
+        switch_a, switch_b = FakeSwitch(3, self.frames), FakeSwitch(3, self.frames)
+        switch_b.labels = [200, 201, 202]
+        folder_a, folder_b = self.folder / 'A', self.folder / 'B'
+        Engine(Adapter(switch_a), folder_a).take_inventory()
+        Engine(Adapter(switch_b), folder_b).take_inventory()
+        switch_a.index = 1                             # Switch A plugged in while folder B is selected
+        engine = Engine(Adapter(switch_a), folder_b)
+        with self.assertRaises(OtherCollection) as caught:
+            engine.prepare_session(other_collections=[folder_a, folder_b])
+        self.assertEqual(Path(caught.exception.folder), folder_a)
+
+    def test_missing_replay_returns_when_it_shows_up_again(self):
+        switch = FakeSwitch(5, self.frames)
+        with self.assertRaises(StopRequested):
+            self.engine(switch).run(limit=1)
+        switch.labels, switch.index = [50, 0, 1, 2, 4], 0    # replay 4 (label 3) gone, one new
+        engine = Engine(Adapter(switch), self.folder)
+        engine.prepare_session()
+        self.assertEqual(engine.journal.get(4).status, 'missing')
+        switch.labels, switch.index = [60, 50, 0, 1, 2, 3, 4], 0   # it is back, plus another new one
+        engine = Engine(Adapter(switch), self.folder)
+        engine.prepare_session()
+        self.assertEqual(engine.journal.get(4).status, 'pending')
+        self.assertEqual(engine.journal.count, 7)
 
     def test_refuses_existing_recording_set(self):
         switch = FakeSwitch(2, self.frames)

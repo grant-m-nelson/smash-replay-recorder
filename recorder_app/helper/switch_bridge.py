@@ -12,6 +12,8 @@ import argparse
 import importlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -45,14 +47,66 @@ def clean_sdp_as_root():
                 subprocess.run(['sdptool', 'del', line.split()[-1]], check=True)
 
 
+BLUEZ_DIR = '/var/lib/bluetooth'
+BOND_STORE = '/var/lib/smash-recorder/bonds'
+MAC = re.compile(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$')
+
+
+def bonded_devices():
+    """(adapter, device) pairs that BlueZ holds a pairing key for."""
+    if not os.path.isdir(BLUEZ_DIR):
+        return []
+    found = []
+    for adapter in os.listdir(BLUEZ_DIR):
+        adapter_dir = os.path.join(BLUEZ_DIR, adapter)
+        if not MAC.match(adapter) or not os.path.isdir(adapter_dir):
+            continue
+        for device in os.listdir(adapter_dir):
+            info = os.path.join(adapter_dir, device, 'info')
+            if MAC.match(device) and os.path.isfile(info) and '[LinkKey]' in open(info, errors='replace').read():
+                found.append((adapter, device))
+    return found
+
+
+def save_pairings():
+    """Keep a copy of every Switch pairing, so pairing another Switch never loses it."""
+    for adapter, device in bonded_devices():
+        target = os.path.join(BOND_STORE, adapter, device)
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(os.path.join(BLUEZ_DIR, adapter, device), target)
+
+
+def restore_pairings():
+    """Put back saved pairings BlueZ no longer has (removed while pairing another Switch)."""
+    restored = []
+    if not os.path.isdir(BOND_STORE):
+        return restored
+    for adapter in os.listdir(BOND_STORE):
+        for device in os.listdir(os.path.join(BOND_STORE, adapter)):
+            target = os.path.join(BLUEZ_DIR, adapter, device)
+            if MAC.match(adapter) and MAC.match(device) and not os.path.exists(target):
+                shutil.copytree(os.path.join(BOND_STORE, adapter, device), target)
+                restored.append(device)
+    if restored:
+        # BlueZ reads pairings when it starts.
+        subprocess.run(['systemctl', 'restart', 'bluetooth'], capture_output=True)
+        emit(event='log', message='Restored pairings: ' + ', '.join(restored))
+    return restored
+
+
 def forget_switches():
-    """Pairing mode: drop stale Switch bonds; a stale key makes auth fail."""
+    """Pairing mode: drop Switch bonds so a stale key can't make pairing fail.
+
+    They were saved first and come back on the next start (restore_pairings),
+    except the Switch being paired now, whose new key replaces the old one.
+    """
+    save_pairings()
     listing = subprocess.run(['bluetoothctl', 'devices'], capture_output=True, text=True).stdout
     for line in listing.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[0] == 'Device':
             subprocess.run(['bluetoothctl', 'remove', parts[1]], capture_output=True)
-            emit(event='log', message='Removed previous pairing ' + parts[1])
+            emit(event='log', message='Set aside previous pairing ' + parts[1])
 
 
 def button_names(buttons):
@@ -78,6 +132,7 @@ def main():
     # NXBT deletes bonds when a reconnect stalls; keep them so the saved
     # Switch can connect back.
     bluez.BlueZ.remove_device = lambda self, *a, **k: None
+    restore_pairings()
     if args.pair:
         forget_switches()
     controller = nxbt.Nxbt()
@@ -116,6 +171,10 @@ def main():
         controller.remove_controller(index)
     except Exception:
         pass
+    try:
+        save_pairings()   # includes a newly paired Switch
+    except OSError as error:
+        emit(event='log', message='Could not save pairings: ' + str(error))
 
 
 if __name__ == '__main__':

@@ -33,6 +33,7 @@ It plays each replay on your Switch, records it through OBS, and moves on to the
 ## Good to know
 
 - **Your replays stay on your Switch.** Nothing on the console is changed or deleted.
+- **More than one Switch?** Each one gets its own video folder automatically. Plug in whichever Switch you want and the recorder picks the right folder; you only pair each Switch once.
 - **Bluetooth:** while the recorder is open, your PC's Bluetooth is used to talk to the Switch, so Bluetooth headphones or mice will disconnect. Windows gets it back when you close the recorder. A cheap USB Bluetooth adapter just for the recorder avoids this.
 - **Older replays:** replays from older game versions sometimes stop partway. The playable part is saved as `replay-NNN-incomplete.mp4`, and the recorder moves on.
 - The first couple of seconds after "GO!" are skipped while the replay controls are hidden.

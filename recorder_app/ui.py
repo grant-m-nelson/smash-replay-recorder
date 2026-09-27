@@ -20,7 +20,7 @@ from recorder_app import screens, setup_env, theme
 from recorder_app.bluetooth import BluetoothAccess
 from recorder_app.config import RecorderConfig
 from recorder_app.controller import Controller, ControllerError, attach_radio, choose_radio
-from recorder_app.engine import Engine, Journal, NeedsAttention, StopRequested
+from recorder_app.engine import DifferentSwitch, Engine, Journal, NeedsAttention, OtherCollection, StopRequested
 from recorder_app.live import LiveIO
 from recorder_app.obs import ObsError, ObsRecorder, local_settings
 
@@ -411,7 +411,7 @@ class App(tk.Tk):
             self.save_settings(bluetooth_instance=radio.instance_id, controller_environment=distribution)
             if self.controller and self.controller.connected:
                 return self.controller_ready()
-            if self.settings.switch_address:
+            if self.known_switches():
                 self.status('Reconnecting to your Switch… make sure it\'s awake.')
                 self.connect_controller(pair=False)
             else:
@@ -430,28 +430,48 @@ class App(tk.Tk):
                 self.connect_controller(pair=True)
         self.start_preview(self.preview, on_frame=watch)
 
+    def known_switches(self):
+        addresses = list(self.settings.switch_addresses)
+        if self.settings.switch_address and self.settings.switch_address not in addresses:
+            addresses.insert(0, self.settings.switch_address)
+        return addresses
+
     def connect_controller(self, pair):
         distribution = self.settings.controller_environment or DEFAULT_DISTRO
         if self.controller:
             self.controller.stop()
-        self.controller = Controller(distribution, self.settings.switch_address)
+            self.controller = None
 
         def connect():
-            self.controller.start(pair=pair)
-            ok = self.controller.wait_connected(90 if pair else 25)
-            if ok and pair:
-                self.controller.press('a')   # "Press A when you're ready" leaves the pairing screen
-            return ok
+            if pair:
+                controller = Controller(distribution)
+                self.controller = controller
+                controller.start(pair=True)
+                ok = controller.wait_connected(90)
+                if ok:
+                    controller.press('a')   # "Press A when you're ready" leaves the pairing screen
+                return ok
+            for attempt, address in enumerate(self.known_switches()):
+                if attempt:
+                    self.say_later('Trying your other Switch…')
+                controller = Controller(distribution, address)
+                self.controller = controller
+                controller.start(pair=False)
+                if controller.wait_connected(20):
+                    return True
+                controller.stop()
+            return False
 
         def done(ok):
             if ok:
-                self.save_settings(switch_address=self.controller.switch_address)
+                address = self.controller.switch_address
+                others = [a for a in self.known_switches() if a != address]
+                self.save_settings(switch_address=address, switch_addresses=tuple([address] + others))
                 self.controller_ready()
             elif pair:
                 self.status('The Switch didn\'t accept the controller. Stay on Change Grip/Order and press Try again.',
                             'warn')
             else:
-                self.controller.stop()
                 self.ask_to_pair()
         self.work(connect, done)
 
@@ -483,13 +503,74 @@ class App(tk.Tk):
         def prepare():
             engine = self.make_engine()
             resumed = engine.journal is not None
-            return engine.prepare_session(), resumed
+            here = Path(self.settings.output_directory)
+            others = [folder for folder in self.settings.collections if Path(folder) != here]
+            try:
+                return 'ready', engine.prepare_session(other_collections=others), resumed
+            except OtherCollection as known:
+                return 'other', known.folder, None
+            except DifferentSwitch as different:
+                return 'different', different.entries, None
 
         def ready(result):
-            count, resumed = result
+            kind, value, resumed = result
             self.preview_running = False
-            self.show_ready(count, resumed)
+            if kind == 'other':
+                self.status('This Switch is recorded in another folder — switching to it.', 'ink')
+                self.save_settings(output_directory=str(value))
+                self.engine = None
+                self.after(1200, self.show_replays)
+            elif kind == 'different':
+                self.show_different_switch(value)
+            else:
+                self.remember_collection()
+                self.show_ready(value, resumed)
         self.work(prepare, ready, self.engine_stopped, engine=True)
+
+    def remember_collection(self):
+        folder = self.settings.output_directory
+        if folder not in self.settings.collections:
+            self.save_settings(collections=tuple(self.settings.collections) + (folder,))
+
+    def next_free_folder(self):
+        base = Path(self.settings.output_directory)
+        for number in range(2, 100):
+            candidate = base.with_name(f'{base.name} (Switch {number})')
+            if not candidate.exists() or not any(candidate.iterdir()):
+                return candidate
+        return base.with_name(base.name + ' (another Switch)')
+
+    def show_different_switch(self, entries):
+        """The connected Switch's replays don't match this folder: give it its own folder."""
+        self.clear(3)
+        suggested = self.next_free_folder()
+        box = self.card(padding=26)
+        self.label(box, 'A different Switch', size=22, weight='bold')
+        self.label(box, f'Its {len(entries)} replays don\'t match the ones in "{Path(self.settings.output_directory).name}". '
+                        'Each Switch gets its own folder, so nothing gets mixed up.', tone='muted', pady=(4, 0))
+        self.label(box, str(suggested), size=10, tone='muted', pady=(14, 0))
+        self.status_label = self.label(box, '', size=10, pady=(6, 0))
+
+        def use(folder):
+            try:
+                Path(folder).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                return self.status('That folder cannot be used. Choose another one.', 'warn')
+            self.save_settings(output_directory=str(folder))
+            self.engine = None
+            engine = self.make_engine()
+
+            def created(count):
+                self.remember_collection()
+                self.show_ready(count, False)
+            self.work(lambda: engine.take_inventory(entries=entries), created, self.engine_stopped, engine=True)
+
+        def choose():
+            chosen = filedialog.askdirectory(parent=self, title='Where should this Switch\'s videos go?')
+            if chosen:
+                use(Path(chosen))
+        self.buttons(box, ('Use this folder', lambda: use(suggested), True), ('Choose folder…', choose, False),
+                     pady=(16, 0))
 
     def show_ready(self, count, resumed):
         self.clear(3)

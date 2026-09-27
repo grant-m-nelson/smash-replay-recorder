@@ -32,7 +32,7 @@ DEFAULT_REPLAY_SECONDS = 150
 GUIDANCE = {
     'list': 'Highlight the replay to start from (the top-left one records everything in order) and press A.',
     'pairing': 'Press B on your controller to leave the controller screen, then open Smash Bros. Ultimate.',
-    'unknown': 'On your Switch, open Super Smash Bros. Ultimate â†’ Vault â†’ Replays â†’ Replay Data, '
+    'unknown': 'On your Switch, open Super Smash Bros. Ultimate → Vault → Replays → Replay Data, '
                'then press A on the first replay.',
     'black': 'Waiting for a picture from your Switch. Make sure it is on and docked.',
 }
@@ -44,6 +44,36 @@ class StopRequested(Exception):
 
 class NeedsAttention(Exception):
     """Something the user must look at; the message says what to do."""
+
+
+class DifferentSwitch(Exception):
+    """The Switch's replay list has nothing in common with this folder's collection.
+
+    Carries the replays already counted so a new collection can start without
+    stepping through the list again.
+    """
+
+    def __init__(self, entries):
+        super().__init__('This looks like a different Switch.')
+        self.entries = entries
+
+
+class OtherCollection(Exception):
+    """The replay on screen belongs to another folder's collection (another Switch)."""
+
+    def __init__(self, folder):
+        super().__init__(f'This Switch is recorded in {folder}.')
+        self.folder = folder
+
+
+def collection_identities(folder):
+    """Replay identities of the collection saved in `folder` (empty if none)."""
+    journal = Journal.load(folder)
+    if not journal:
+        return []
+    inventory = Path(folder) / STATE_DIR / 'inventory'
+    return [screens.load_identity(inventory / f'{n:03d}.npz') for n in range(1, journal.count + 1)
+            if (inventory / f'{n:03d}.npz').exists()]
 
 
 @dataclass
@@ -245,7 +275,7 @@ class Engine:
             if name == 'old_replay_error' and screens.old_replay_no_selected(image):
                 self.io.press('a')   # "No" keeps the replay on the console.
             elif name in ('overlay', 'paused', 'game_end', 'end_no', 'end_yes'):
-                self.say('Leaving the replay that is playingâ€¦')
+                self.say('Leaving the replay that is playing…')
                 self.exit_playback()
                 continue
             text = GUIDANCE.get(name, GUIDANCE['unknown'])
@@ -290,14 +320,16 @@ class Engine:
                 self.io.sleep(.4)
         return entries
 
-    def take_inventory(self):
-        """First visit: count every replay and read its length."""
+    def take_inventory(self, entries=None):
+        """First visit: count every replay (unless already counted) and read its length."""
         if self.journal:
             raise NeedsAttention('This folder already has a recording set. Resume it or choose another folder.')
-        self.say('Counting your replaysâ€¦')
-        entries = self.walk_list()
+        if entries is None:
+            self.say('Counting your replays…')
+            entries = self.walk_list()
         journal = Journal(count=len(entries),
                           replays=[Replay(n, listed_seconds=seconds) for n, (_, seconds) in enumerate(entries, 1)])
+        self.output.mkdir(parents=True, exist_ok=True)
         (self.output / STATE_DIR / 'inventory').mkdir(parents=True, exist_ok=True)
         for number, (ident, _) in enumerate(entries, 1):
             screens.save_identity(self._inventory_file(number), ident)
@@ -307,9 +339,17 @@ class Engine:
         return len(entries)
 
     def rescan(self):
-        """Later visits: merge replays saved since last time; keep everything already recorded."""
-        self.say('Checking for replays saved since last timeâ€¦')
+        """Later visits: merge replays saved since last time; keep everything already recorded.
+
+        Raises DifferentSwitch (without changing anything) when the list shares
+        no replays with this collection, so another console's list is never
+        merged into it.
+        """
+        self.say('Checking for replays saved since last time…')
         entries = self.walk_list()
+        known = sum(1 for ident, _ in entries if self.locate_identity(ident) is not None)
+        if known < min(2, len(self.inventory), len(entries)) or known == 0:
+            raise DifferentSwitch(entries)
         order, added = [], 0
         for ident, seconds in entries:
             number = self.locate_identity(ident)
@@ -319,8 +359,12 @@ class Engine:
                 screens.save_identity(self._inventory_file(number), ident)
                 self.inventory.append(ident)
                 added += 1
-            elif self.journal.get(number).listed_seconds is None:
-                self.journal.get(number).listed_seconds = seconds
+            else:
+                replay = self.journal.get(number)
+                if replay.listed_seconds is None:
+                    replay.listed_seconds = seconds
+                if replay.status == 'missing':   # it came back (e.g. the list was re-sorted)
+                    replay.status, replay.note = 'pending', None
             order.append(number)
         present = set(order)
         for replay in self.journal.replays:
@@ -332,12 +376,22 @@ class Engine:
         self.say(f'Added {added} new replays.' if added else 'No new replays.')
         return added
 
-    def prepare_session(self):
-        """Count on the first visit; later, merge new replays only if the list changed."""
+    def prepare_session(self, other_collections=()):
+        """Get this folder's collection ready for the Switch that is connected.
+
+        - First visit to an empty folder: count the replays.
+        - The replay on screen belongs to another folder's collection: raise OtherCollection.
+        - The list changed: merge new replays, or raise DifferentSwitch if nothing matches.
+        """
+        image = self.find_details()
         if not self.journal:
             return self.take_inventory()
-        image = self.find_details()
         if self.locate(image) is None:
+            current = screens.identity(image)
+            for folder in other_collections:
+                if Path(folder) != self.output and any(screens.same_replay(current, known)
+                                                       for known in collection_identities(folder)):
+                    raise OtherCollection(folder)
             self.rescan()
         return self.journal.count
 
@@ -372,7 +426,7 @@ class Engine:
             count = len(order)
             forward = (order.index(target) - order.index(current)) % count
             button, steps = ('r', forward) if forward <= count - forward else ('l', count - forward)
-            self.say(f'Moving to replay {target}â€¦')
+            self.say(f'Moving to replay {target}…')
             for _ in range(steps):
                 self.io.press(button)
                 self.io.sleep(.35)
@@ -460,7 +514,7 @@ class Engine:
     def record_one(self, replay):
         number = replay.number
         self.progress('waiting', number)
-        self.say(f'Starting replay {number} of {self.journal.count}â€¦')
+        self.say(f'Starting replay {number} of {self.journal.count}…')
         waiting_since = self.io.now()
         opening_seen = None
         recording = False
@@ -535,7 +589,7 @@ class Engine:
     def _save(self, replay, incomplete=False):
         raw = self.io.record_stop()
         name = f'replay-{replay.number:03d}' + ('-incomplete' if incomplete else '') + '.mp4'
-        self.say(f'Saving replay {replay.number}â€¦')
+        self.say(f'Saving replay {replay.number}…')
         try:
             details = finalize(raw, self.output / name)
         except MediaError as error:
