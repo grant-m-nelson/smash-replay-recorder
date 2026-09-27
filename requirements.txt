@@ -1,0 +1,4 @@
+# Runtime dependencies bundled into the Windows recorder executable.
+websocket-client==1.8.0
+pillow==12.3.0
+numpy==2.3.5
