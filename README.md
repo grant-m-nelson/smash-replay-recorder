@@ -16,7 +16,7 @@ It plays each replay on your Switch, records it through OBS, and moves on to the
 
 ## Install
 
-1. Download **SmashReplayRecorder-Setup.exe** from the [latest release](../../releases/latest).
+1. Download **SmashReplayRecorder-Setup.exe** from the [Releases page](../../releases).
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway** (the app isn't code-signed yet).
 3. Click **Yes** when Windows asks for permission. That's the only time it asks.
 4. If setup says Windows needs to restart, restart, then open **Smash Replay Recorder** from the Start menu.
