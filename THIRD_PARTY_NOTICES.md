@@ -4,7 +4,7 @@ The installer (`SmashReplayRecorder-Setup.exe`) bundles the following unmodified
 
 | Component | Version | License | Source |
 |---|---|---|---|
-| FFmpeg (`ffmpeg.exe`, BtbN LGPL build) | N-126889-gb139ba11d8-20260926 | LGPL v3 | [FFmpeg source at b139ba11d8](https://github.com/FFmpeg/FFmpeg/tree/b139ba11d8), [build scripts](https://github.com/BtbN/FFmpeg-Builds) |
+| FFmpeg (`ffmpeg.exe`, BtbN LGPL build) | 9.0 release branch (exact version: `ffmpeg -version`) | LGPL v3 | [FFmpeg source](https://github.com/FFmpeg/FFmpeg/tree/release/9.0), [build scripts](https://github.com/BtbN/FFmpeg-Builds) |
 | usbipd-win (installer, run only if missing) | 5.3.0 | GPL-3.0 | [dorssel/usbipd-win](https://github.com/dorssel/usbipd-win/tree/v5.3.0) |
 | NXBT (in the controller helper) | commit ec4b800 | MIT | [Brikwerk/nxbt](https://github.com/Brikwerk/nxbt/tree/ec4b800ad6c55de96bb6c7f9f84b5bdc59a4c975) |
 | Ubuntu 22.04 packages in the controller helper (BlueZ, systemd, Python 3, dbus-python, psutil and their dependencies) | jammy | Various (mostly GPL/LGPL) | `apt-get source <package>`, or [Launchpad](https://launchpad.net/ubuntu/jammy) |

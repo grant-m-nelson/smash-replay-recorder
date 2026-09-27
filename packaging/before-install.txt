@@ -1,0 +1,22 @@
+Smash Replay Recorder records every replay on your Switch as its own video.
+
+To press buttons on your Switch over Bluetooth, setup makes these changes to this PC:
+
+  - Installs usbipd-win (USB device sharing), if it isn't already installed.
+
+  - Turns on Windows Subsystem for Linux (WSL), if it isn't already on.
+    Windows may need to restart once.
+
+  - Adds a small Windows service, "Smash Replay Recorder Bluetooth". While the
+    recorder is open it lends your Bluetooth adapter to the recorder, and it
+    gives it back to Windows when you close the recorder. Bluetooth headphones
+    or mice won't work while the recorder is open.
+
+  - The first time the recorder runs, it adds its own Linux helper to WSL,
+    named "SmashRecorder".
+
+Uninstalling removes the service and the Linux helper. usbipd-win and WSL stay
+installed because other programs may use them; you can remove them from
+Windows Settings > Apps.
+
+Nothing on your Switch is changed or deleted.

@@ -23,6 +23,7 @@ OutputBaseFilename=SmashReplayRecorder-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+InfoBeforeFile=before-install.txt
 UninstallDisplayIcon={app}\SmashReplayRecorder.exe
 CloseApplications=yes
 

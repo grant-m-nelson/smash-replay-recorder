@@ -1,0 +1,97 @@
+name: Build installer
+
+# Builds SmashReplayRecorder-Setup.exe entirely on GitHub-hosted runners, so
+# the published installer can be traced back to this repository's source.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # attach the installer to the release for version tags
+
+jobs:
+  helper-image:
+    name: Controller helper image (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the WSL helper image
+        run: sudo bash packaging/build_helper_image.sh "$GITHUB_WORKSPACE/smash-recorder-helper.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-image
+          path: smash-recorder-helper.tar.gz
+          retention-days: 7
+
+  installer:
+    name: Installer (Windows)
+    needs: helper-image
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt pyinstaller==6.16.0
+
+      - name: Run tests
+        run: python -m unittest discover -s recorder_app -p "test_*.py" -t .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: helper-image
+          path: vendor
+
+      - name: Download bundled tools
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor\ffmpeg | Out-Null
+          # FFmpeg 9.0 release branch, LGPL build (BtbN/FFmpeg-Builds)
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-9.0.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip ffmpeg-extract
+          Copy-Item (Get-ChildItem ffmpeg-extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName vendor\ffmpeg\
+          & vendor\ffmpeg\ffmpeg.exe -version | Select-Object -First 1
+          # usbipd-win 5.3.0 (build.ps1 verifies the SHA-256)
+          Invoke-WebRequest https://github.com/dorssel/usbipd-win/releases/download/v5.3.0/usbipd-win_5.3.0_x64.msi -OutFile vendor\usbipd-win_5.3.0_x64.msi
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '0.0.0-dev' }
+          packaging\build.ps1 -Python (Get-Command python).Source -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version $version
+
+      - name: Upload installer
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmashReplayRecorder-Setup
+          path: dist/SmashReplayRecorder-Setup.exe
+
+      # Code signing (SignPath Foundation). Enable once the SignPath project
+      # exists: set the SIGNPATH_API_TOKEN secret and the three IDs below.
+      # - name: Sign installer
+      #   uses: signpath/github-action-submit-signing-request@v1
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: '<organization id>'
+      #     project-slug: 'smash-replay-recorder'
+      #     signing-policy-slug: 'release-signing'
+      #     github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+      #     wait-for-completion: true
+      #     output-artifact-directory: signed
+
+      - name: Attach to release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload $env:GITHUB_REF_NAME dist/SmashReplayRecorder-Setup.exe --clobber

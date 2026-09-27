@@ -45,6 +45,17 @@ The recorder pretends to be a wireless Pro Controller (using [NXBT](https://gith
 
 Building it yourself: see [BUILDING.md](BUILDING.md).
 
+## Code signing policy
+
+Every installer is built by [GitHub Actions](.github/workflows/build.yml) from the source code in this repository, on GitHub's own build machines.
+
+Signing: free code signing from [SignPath Foundation](https://signpath.org) has been applied for. Until it's approved, releases are unsigned (hence the Windows warning above).
+
+- Committers and reviewers: [grant-m-nelson](https://github.com/grant-m-nelson)
+- Approvers: [grant-m-nelson](https://github.com/grant-m-nelson)
+
+Privacy: the recorder doesn't send any information over the internet. It only talks to OBS and the controller helper on your own PC. (If WSL isn't installed yet, setup downloads it from Microsoft.)
+
 ## License
 
 MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the software bundled in the installer.
